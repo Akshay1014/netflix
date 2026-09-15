@@ -1,5 +1,4 @@
 import { useDispatch } from "react-redux";
-import { getGeminiModel } from "../utils/gemini";
 import { setGeminiResults, setSearchLoading } from "../utils/geminiSlice";
 import API_OPTIONS, { TMDB_SEARCH } from "../utils/constants";
 
@@ -10,25 +9,20 @@ const useGeminiSearch = () => {
         if (!query.trim()) return;
         dispatch(setSearchLoading(true));
 
-        const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || "").trim();
-        const isApiKeyProvided = Boolean(apiKey && apiKey.length > 5);
-
         try {
-            if (!isApiKeyProvided) {
-                throw new Error("GEMINI_KEY_MISSING");
+            // Step 1: Ask Gemini via our secure serverless function (/api/gemini)
+            // The API key lives on the server — it is never sent to the browser.
+            const geminiRes = await fetch("/api/gemini", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ query }),
+            });
+
+            if (!geminiRes.ok) {
+                throw new Error("GEMINI_API_ERROR");
             }
 
-            // Step 1: Ask Gemini for movie recommendations
-            const prompt = `You are a movie recommendation expert. 
-A user is searching for: "${query}"
-Return ONLY a comma-separated list of exactly 5 movie titles that best match this description. 
-Do not include any explanation, numbering, or extra text. Just the movie titles separated by commas.
-Example format: Inception, Interstellar, The Matrix, Tenet, Avatar`;
-
-            const geminiModel = getGeminiModel();
-            const result = await geminiModel.generateContent(prompt);
-            const response = await result.response;
-            const textContent = response.text();
+            const { text: textContent } = await geminiRes.json();
 
             if (!textContent) {
                 throw new Error("EMPTY_GEMINI_RESPONSE");
@@ -79,25 +73,17 @@ Example format: Inception, Interstellar, The Matrix, Tenet, Avatar`;
             // Fallback: Direct TMDB Search
             try {
                 const res = await fetch(
-                    `${TMDB_SEARCH}?query=${encodeURIComponent(
-                        query
-                    )}&include_adult=false`,
+                    `${TMDB_SEARCH}?query=${encodeURIComponent(query)}&include_adult=false`,
                     API_OPTIONS
                 );
                 const data = await res.json();
                 const fallbackMovies = data.results || [];
 
-                let errorNotice = "Notice: AI recommendation service unavailable. Showing direct TMDB search results.";
-                if (err.message === "GEMINI_KEY_MISSING") {
-                    errorNotice =
-                        "Notice: Invalid or missing Gemini API Key in .env. Showing direct TMDB search results instead.";
-                }
-
                 dispatch(
                     setGeminiResults({
                         movies: fallbackMovies,
                         isFallback: true,
-                        error: errorNotice,
+                        error: "Notice: AI recommendation service unavailable. Showing direct TMDB search results.",
                     })
                 );
             } catch (fallbackErr) {
